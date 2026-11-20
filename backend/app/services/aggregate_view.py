@@ -61,12 +61,59 @@ class AggregateViewService(BaseModuleService):
             "pass_ratio": pipeline.get("pass_ratio", 0.0),
         }
 
+    def aggregate_valid_links(self) -> dict[str, Any]:
+        """执行一轮有效链接汇总：消费知识链接有效性核对数据集中的实际有效区间，
+        采纳结果回写链接验证台账；当次质量汇总与有效链接清单条数保持一致。"""
+        from app.services.knowledge_link import KnowledgeLinkService
+        kls = KnowledgeLinkService()
+        dataset = kls.build_validity_check_dataset()
+        writeback = kls.apply_validity_conclusions(dataset)
+
+        state = store.module_state(self.MODULE)
+        state["valid_link_rounds"] = int(state.get("valid_link_rounds", 0)) + 1
+
+        details = []
+        for record in dataset["records"]:
+            open_interval = None
+            if record["当前是否有效"]:
+                open_interval = next(
+                    (i for i in record["有效区间"] if i.get("valid_until") is None), None
+                )
+            details.append({
+                "link_id": record["link_id"],
+                "链接ID": record["链接ID"],
+                "usable": record["当前是否有效"],
+                "conclusion": record["实际结论"],
+                "valid_since": (open_interval or {}).get("valid_from"),
+                "valid_since_event": (open_interval or {}).get("source_event"),
+                "valid_since_seq": (open_interval or {}).get("valid_from_seq"),
+                "blocked_by": record["阻止进入当轮数据"],
+            })
+        valid_links = [d["link_id"] for d in details if d["usable"]]
+        quality_summary = dict(dataset["summary"])
+        quality_summary["valid_list_count"] = len(valid_links)
+        return {
+            "ok": True,
+            "view_name": "知识链接有效性汇总",
+            "chart_type": "table",
+            "data_source": dataset["dataset"],
+            "round_id": f"valid-links-round-{state['valid_link_rounds']}",
+            "round_seq": dataset["as_of_seq"],
+            "generated_at": dataset["generated_at"],
+            "quality_summary": quality_summary,
+            "valid_links": valid_links,
+            "summary_list_consistent": quality_summary["valid"] == len(valid_links),
+            "details": details,
+            "ledger_writeback": writeback,
+        }
+
     def build_dashboard(self) -> dict[str, Any]:
         """构建完整仪表盘：聚合所有模块的快照数据。"""
         panels = [
             self.aggregate_entity_distribution(),
             self.aggregate_sentiment_trend(),
             self.aggregate_quality_metrics(),
+            self.aggregate_valid_links(),
         ]
         return {
             "ok": True,

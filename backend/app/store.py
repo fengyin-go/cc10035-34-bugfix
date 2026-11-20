@@ -14,9 +14,17 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        self._module_state: dict[str, dict[str, Any]] = {}
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
+
+    def module_state(self, module: str) -> dict[str, Any]:
+        """模块级运行状态（生命周期事件台账、序号等）。
+
+        与业务表分离：不进入列表/导出，也不参与概览的模块统计。
+        """
+        return self._module_state.setdefault(module, {})
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
